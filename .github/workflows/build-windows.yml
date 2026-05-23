@@ -77,7 +77,6 @@ jobs:
       with:
         name: ProxyBridge-Build-${{ github.sha }}
         path: Windows/output/
-        retention-days: 30
 
     - name: List output files
       run: |
