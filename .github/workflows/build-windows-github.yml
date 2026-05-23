@@ -1,0 +1,90 @@
+name: Build Windows Github
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-2022
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner)
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install WinDivert 2.2.2-A
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $installDir = "C:\WinDivert-2.2.2-A"
+        $zipUrl = "https://reqrypt.org/download/WinDivert-2.2.2-A.zip"
+        $zipPath = "$env:TEMP\WinDivert-2.2.2-A.zip"
+        $extractRoot = "$env:TEMP\WinDivertExtract"
+
+        if (Test-Path $installDir) {
+          Write-Host "WinDivert already exists at $installDir"
+          exit 0
+        }
+
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+
+        if (Test-Path $extractRoot) {
+          Remove-Item $extractRoot -Recurse -Force
+        }
+
+        New-Item -ItemType Directory -Path $extractRoot | Out-Null
+        Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
+
+        $sourceDir = Join-Path $extractRoot "WinDivert-2.2.2-A"
+
+        if (!(Test-Path $sourceDir)) {
+          Write-Error "Extracted WinDivert folder not found: $sourceDir"
+          Get-ChildItem $extractRoot -Recurse
+          exit 1
+        }
+
+        Move-Item -Path $sourceDir -Destination $installDir
+
+        Write-Host "WinDivert installed at $installDir"
+
+    - name: Verify WinDivert installation
+      shell: pwsh
+      run: |
+        $dir = "C:\WinDivert-2.2.2-A"
+
+        $required = @(
+          "$dir\x64\WinDivert.dll",
+          "$dir\x64\WinDivert64.sys",
+          "$dir\include\windivert.h"
+        )
+
+        foreach ($file in $required) {
+          if (!(Test-Path $file)) {
+            Write-Error "Missing required WinDivert file: $file"
+            exit 1
+          }
+        }
+
+        Write-Host "WinDivert 2.2.2-A is ready."
+
+    - name: Build and sign project
+      run: .\Windows\compile.ps1
+      shell: pwsh
+
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-build
+        path: |
+          **/*.exe
+          **/*.msi
+          **/*.zip
+          **/*.7z
+          **/*.dll
+          **/*.sys
+        if-no-files-found: warn
