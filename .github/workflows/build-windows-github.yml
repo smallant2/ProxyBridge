@@ -1,90 +1,98 @@
-name: Build Windows Github
+name: build-windows-github
 
 on:
-  push:
-    branches: [ main, dev ]
-  pull_request:
-    branches: [ main, dev ]
   workflow_dispatch:
+  push:
+    branches: [ master, main ]
 
 jobs:
-  build-and-release:
+  build:
     runs-on: windows-2022
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner)
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install WinDivert 2.2.2-A
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = "Stop"
+      - name: Install WinDivert 2.2.2-A
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-        $installDir = "C:\WinDivert-2.2.2-A"
-        $zipUrl = "https://reqrypt.org/download/WinDivert-2.2.2-A.zip"
-        $zipPath = "$env:TEMP\WinDivert-2.2.2-A.zip"
-        $extractRoot = "$env:TEMP\WinDivertExtract"
+          $installDir = "C:\WinDivert-2.2.2-A"
+          $zipUrl = "https://reqrypt.org/download/WinDivert-2.2.2-A.zip"
+          $zipPath = "$env:TEMP\WinDivert-2.2.2-A.zip"
+          $extractRoot = "$env:TEMP\WinDivertExtract"
 
-        if (Test-Path $installDir) {
-          Write-Host "WinDivert already exists at $installDir"
-          exit 0
-        }
+          if (Test-Path $installDir) {
+            Write-Host "WinDivert already exists at $installDir"
+            exit 0
+          }
 
-        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
 
-        if (Test-Path $extractRoot) {
-          Remove-Item $extractRoot -Recurse -Force
-        }
+          if (Test-Path $extractRoot) {
+            Remove-Item $extractRoot -Recurse -Force
+          }
 
-        New-Item -ItemType Directory -Path $extractRoot | Out-Null
-        Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
+          New-Item -ItemType Directory -Path $extractRoot | Out-Null
+          Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
 
-        $sourceDir = Join-Path $extractRoot "WinDivert-2.2.2-A"
+          $sourceDir = Join-Path $extractRoot "WinDivert-2.2.2-A"
 
-        if (!(Test-Path $sourceDir)) {
-          Write-Error "Extracted WinDivert folder not found: $sourceDir"
-          Get-ChildItem $extractRoot -Recurse
-          exit 1
-        }
-
-        Move-Item -Path $sourceDir -Destination $installDir
-
-        Write-Host "WinDivert installed at $installDir"
-
-    - name: Verify WinDivert installation
-      shell: pwsh
-      run: |
-        $dir = "C:\WinDivert-2.2.2-A"
-
-        $required = @(
-          "$dir\x64\WinDivert.dll",
-          "$dir\x64\WinDivert64.sys",
-          "$dir\include\windivert.h"
-        )
-
-        foreach ($file in $required) {
-          if (!(Test-Path $file)) {
-            Write-Error "Missing required WinDivert file: $file"
+          if (!(Test-Path $sourceDir)) {
+            Write-Error "WinDivert extracted folder not found"
+            Get-ChildItem $extractRoot -Recurse
             exit 1
           }
-        }
 
-        Write-Host "WinDivert 2.2.2-A is ready."
+          Move-Item -Path $sourceDir -Destination $installDir
+          Write-Host "WinDivert installed at $installDir"
 
-    - name: Build and sign project
-      run: .\Windows\compile.ps1
-      shell: pwsh
+      - name: Check Visual Studio C++ tools
+        shell: pwsh
+        run: |
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
-    - name: Upload Windows artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-build
-        path: |
-          **/*.exe
-          **/*.msi
-          **/*.zip
-          **/*.7z
-          **/*.dll
-          **/*.sys
-        if-no-files-found: warn
+          if (!(Test-Path $vsWhere)) {
+            Write-Error "vswhere.exe not found"
+            exit 1
+          }
+
+          $vsPath = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+
+          if (!$vsPath) {
+            Write-Error "Visual Studio C++ tools not found"
+            exit 1
+          }
+
+          Write-Host "Visual Studio found at: $vsPath"
+
+          $vcvarsPath = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
+          if (!(Test-Path $vcvarsPath)) {
+            Write-Error "vcvarsall.bat not found"
+            exit 1
+          }
+
+          Write-Host "vcvarsall.bat found: $vcvarsPath"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y
+
+      - name: Build
+        shell: pwsh
+        run: |
+          .\Windows\compile.ps1 -Compiler msvc -NoSign
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyBridge-windows-output
+          path: output/**
+          if-no-files-found: error
