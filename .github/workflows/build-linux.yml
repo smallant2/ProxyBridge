@@ -87,7 +87,6 @@ jobs:
       with:
         name: ProxyBridge-Linux-Build-${{ github.sha }}
         path: Linux/output/
-        retention-days: 30
 
     - name: Display build summary
       run: |
